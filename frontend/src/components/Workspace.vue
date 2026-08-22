@@ -660,7 +660,7 @@ onMounted(async () => {
   display: grid;
   grid-template-columns: auto 1fr auto;
   gap: 24px;
-  align-items: end;
+  align-items: center;
   margin-bottom: 24px;
 }
 
@@ -679,6 +679,8 @@ h1 {
 .orgs {
   display: flex;
   flex-wrap: wrap;
+  justify-content: center;
+  justify-self: center;
   gap: 8px;
 }
 
