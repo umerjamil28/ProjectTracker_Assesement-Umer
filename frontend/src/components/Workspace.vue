@@ -29,6 +29,10 @@ const editDescription = ref("");
 const editAssignee = ref("");
 const editStatus = ref("open");
 const savingEdit = ref(false);
+const profileOpen = ref(false);
+const profile = ref(null);
+const profileLoading = ref(false);
+const profileError = ref("");
 const cache = new Map();
 const taskCache = new Map();
 
@@ -314,6 +318,23 @@ function statusLabel(status) {
   return status.replace("_", " ");
 }
 
+async function openProfile() {
+  profileOpen.value = true;
+  profileLoading.value = true;
+  profileError.value = "";
+  try {
+    profile.value = await api.me();
+  } catch (err) {
+    profileError.value = err.message;
+  } finally {
+    profileLoading.value = false;
+  }
+}
+
+function closeProfile() {
+  profileOpen.value = false;
+}
+
 onMounted(async () => {
   try {
     await loadOrganizations();
@@ -347,12 +368,41 @@ onMounted(async () => {
         </button>
       </div>
       <div class="who">
-        <strong>{{ user.first_name || user.username }}</strong>
+        <button type="button" class="name-btn" @click="openProfile">
+          {{ user.first_name || user.username }}
+        </button>
         <button type="button" class="ghost" @click="emit('logout')">
           Log out
         </button>
       </div>
     </header>
+
+    <div
+      v-if="profileOpen"
+      class="overlay"
+      @click.self="closeProfile"
+    >
+      <section class="popup" role="dialog" aria-labelledby="profile-title">
+        <div class="popup-head">
+          <h2 id="profile-title">Your profile</h2>
+          <button type="button" class="ghost" @click="closeProfile">Close</button>
+        </div>
+        <p v-if="profileLoading" class="empty">Loading profile…</p>
+        <p v-else-if="profileError" class="banner">{{ profileError }}</p>
+        <div v-else-if="profile" class="profile">
+          <p><span>Username</span> {{ profile.username }}</p>
+          <p><span>Name</span> {{ [profile.first_name, profile.last_name].filter(Boolean).join(" ") || "—" }}</p>
+          <p><span>Email</span> {{ profile.email || "—" }}</p>
+          <h3>Organizations</h3>
+          <ul>
+            <li v-for="item in profile.memberships" :key="item.organization_id">
+              {{ item.organization_name }}
+              <em>{{ item.role }}</em>
+            </li>
+          </ul>
+        </div>
+      </section>
+    </div>
 
     <p v-if="error" class="banner">{{ error }}</p>
 
@@ -550,6 +600,85 @@ h1 {
   justify-content: flex-end;
   gap: 12px;
   text-align: right;
+}
+
+.name-btn {
+  border: 0;
+  padding: 0;
+  background: none;
+  font-weight: 650;
+  font-family: Fraunces, serif;
+  font-size: 1.05rem;
+  cursor: pointer;
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(27, 24, 20, 0.35);
+}
+
+.popup {
+  width: min(420px, 100%);
+  padding: 24px;
+  border-radius: 24px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+}
+
+.popup-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.profile p {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 0 10px;
+}
+
+.profile span {
+  color: var(--muted);
+}
+
+.profile h3 {
+  margin: 18px 0 8px;
+  font-size: 1.1rem;
+}
+
+.profile ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.profile li {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #fff;
+  border: 1px solid var(--line);
+}
+
+.profile em {
+  font-style: normal;
+  color: var(--accent-dark);
+  text-transform: capitalize;
 }
 
 .banner {
