@@ -63,12 +63,22 @@ export const api = {
   projects(organizationId, signal) {
     return request(`/organizations/${organizationId}/projects/`, { signal });
   },
-  tasks(projectId, { status, assignee, signal } = {}) {
+  tasks(projectId, { status, assignee, page, signal } = {}) {
     const query = new URLSearchParams();
     if (status) query.set("status", status);
     if (assignee) query.set("assignee", assignee);
+    if (page) query.set("page", String(page));
     const suffix = query.toString() ? `?${query}` : "";
     return request(`/projects/${projectId}/tasks/${suffix}`, { signal });
+  },
+  createProject(organizationId, payload) {
+    return request(`/organizations/${organizationId}/projects/`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  deleteTask(taskId) {
+    return request(`/tasks/${taskId}/`, { method: "DELETE" });
   },
   markDone(taskId, signal) {
     return request(`/tasks/${taskId}/done/`, { method: "POST", signal });

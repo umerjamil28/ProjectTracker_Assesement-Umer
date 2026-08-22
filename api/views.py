@@ -2,6 +2,7 @@ from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
 from rest_framework import status
 from rest_framework.authtoken.models import Token
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -135,6 +136,12 @@ class ProjectListCreateView(APIView):
         )
 
 
+class TaskPagination(PageNumberPagination):
+    page_size = 5
+    page_size_query_param = "page_size"
+    max_page_size = 50
+
+
 class TaskListView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -154,7 +161,9 @@ class TaskListView(APIView):
             else:
                 tasks = tasks.filter(assigned_to__username__iexact=assignee)
 
-        return Response(TaskSerializer(tasks, many=True).data)
+        paginator = TaskPagination()
+        page = paginator.paginate_queryset(tasks, request, view=self)
+        return paginator.get_paginated_response(TaskSerializer(page, many=True).data)
 
     def post(self, request, project_id):
         project, membership = get_project_for_user(request.user, project_id)
@@ -185,6 +194,12 @@ class TaskDetailView(APIView):
         serializer.is_valid(raise_exception=True)
         task = serializer.save()
         return Response(TaskSerializer(task).data)
+
+    def delete(self, request, task_id):
+        task, membership = get_task_for_user(request.user, task_id)
+        require_task_write(membership)
+        task.soft_delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class TaskMarkDoneView(APIView):

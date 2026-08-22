@@ -2,6 +2,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Count, Prefetch, Q
+from django.utils import timezone
 
 
 class Organization(models.Model):
@@ -59,7 +60,10 @@ class ProjectQuerySet(models.QuerySet):
         return self.annotate(
             open_task_count=Count(
                 "tasks",
-                filter=Q(tasks__status=Task.Status.OPEN),
+                filter=Q(
+                    tasks__status=Task.Status.OPEN,
+                    tasks__deleted_at__isnull=True,
+                ),
             )
         ).prefetch_related(
             Prefetch(
@@ -92,6 +96,11 @@ class Project(models.Model):
         return self.name
 
 
+class AliveTaskManager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().filter(deleted_at__isnull=True)
+
+
 class Task(models.Model):
     class Status(models.TextChoices):
         OPEN = "open", "Open"
@@ -117,6 +126,7 @@ class Task(models.Model):
     )
     due_date = models.DateField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "task"
@@ -126,8 +136,15 @@ class Task(models.Model):
             models.Index(fields=["project", "assigned_to"]),
         ]
 
+    objects = AliveTaskManager()
+    all_objects = models.Manager()
+
     def __str__(self):
         return self.title
+
+    def soft_delete(self):
+        self.deleted_at = timezone.now()
+        type(self).all_objects.filter(pk=self.pk).update(deleted_at=self.deleted_at)
 
     def clean(self):
         super().clean()

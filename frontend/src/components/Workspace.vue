@@ -17,12 +17,18 @@ const statusFilter = ref("");
 const assigneeFilter = ref("");
 const error = ref("");
 const loadingProjects = ref(false);
+const refreshingProjects = ref(false);
 const loadingTasks = ref(false);
 const markingId = ref(null);
 const newTitle = ref("");
 const newDescription = ref("");
 const newAssignee = ref("");
 const creating = ref(false);
+const newProjectName = ref("");
+const creatingProject = ref(false);
+const taskPage = ref(1);
+const taskCount = ref(0);
+const deletingId = ref(null);
 const editingId = ref(null);
 const editTitle = ref("");
 const editDescription = ref("");
@@ -50,17 +56,21 @@ const currentProject = computed(() =>
 const canWrite = computed(() =>
   ["admin", "member"].includes(currentOrg.value?.role),
 );
+const canAdmin = computed(() => currentOrg.value?.role === "admin");
+const taskPageCount = computed(() =>
+  Math.max(1, Math.ceil(taskCount.value / 5)),
+);
 
 function isAbort(err) {
   return err?.name === "AbortError";
 }
 
-function taskKey(projectId, status = statusFilter.value, assignee = assigneeFilter.value) {
-  return `${projectId}:${status}:${assignee}`;
+function taskKey(projectId, status = statusFilter.value, assignee = assigneeFilter.value, page = taskPage.value) {
+  return `${projectId}:${status}:${assignee}:${page}`;
 }
 
-function rememberTasks(projectId, list) {
-  taskCache.set(taskKey(projectId), list);
+function rememberTasks(projectId, payload) {
+  taskCache.set(taskKey(projectId), payload);
 }
 
 function invalidateProjectTasks(id) {
@@ -98,7 +108,9 @@ function showCachedOrg(id) {
   projects.value = cached.projects;
   members.value = cached.members;
   projectId.value = cached.projectId;
-  tasks.value = cachedTasks(cached.projectId) ?? [];
+  const cachedTasksPage = cachedTasks(cached.projectId);
+  tasks.value = cachedTasksPage?.results ?? [];
+  taskCount.value = cachedTasksPage?.count ?? 0;
   newAssignee.value = defaultAssignee();
   return true;
 }
@@ -134,6 +146,7 @@ async function loadWorkspace(id = orgId.value) {
   abortTasks();
   const hadCache = showCachedOrg(id);
   loadingProjects.value = !hadCache;
+  refreshingProjects.value = true;
   error.value = "";
 
   try {
@@ -162,6 +175,7 @@ async function loadWorkspace(id = orgId.value) {
   } finally {
     if (seq === workspaceSeq) {
       loadingProjects.value = false;
+      refreshingProjects.value = false;
     }
   }
 }
@@ -177,7 +191,8 @@ async function loadTasks(explicitProjectId) {
   const signal = abortTasks();
   const hit = cachedTasks(id);
   if (hit) {
-    tasks.value = hit;
+    tasks.value = hit.results;
+    taskCount.value = hit.count;
     loadingTasks.value = false;
   } else {
     tasks.value = [];
@@ -186,16 +201,21 @@ async function loadTasks(explicitProjectId) {
   error.value = "";
 
   try {
-    const list = await api.tasks(id, {
+    const payload = await api.tasks(id, {
       status: statusFilter.value,
       assignee: assigneeFilter.value,
+      page: taskPage.value,
       signal,
     });
     if (seq !== taskSeq || projectId.value !== id) {
       return;
     }
-    tasks.value = list;
-    rememberTasks(id, list);
+    tasks.value = payload.results;
+    taskCount.value = payload.count;
+    rememberTasks(id, {
+      results: payload.results,
+      count: payload.count,
+    });
     rememberOrg();
   } catch (err) {
     if (isAbort(err) || seq !== taskSeq) {
@@ -230,6 +250,7 @@ async function createTask() {
     });
     newTitle.value = "";
     newDescription.value = "";
+    taskPage.value = 1;
     invalidateProjectTasks(projectId.value);
     await loadWorkspace();
   } catch (err) {
@@ -237,6 +258,60 @@ async function createTask() {
   } finally {
     creating.value = false;
   }
+}
+
+async function createProject() {
+  if (!orgId.value || !newProjectName.value.trim()) {
+    error.value = "Project name is required.";
+    return;
+  }
+
+  creatingProject.value = true;
+  error.value = "";
+  try {
+    const project = await api.createProject(orgId.value, {
+      name: newProjectName.value.trim(),
+    });
+    newProjectName.value = "";
+    projectId.value = project.id;
+    taskPage.value = 1;
+    cache.delete(orgId.value);
+    await loadWorkspace();
+  } catch (err) {
+    error.value = err.message;
+  } finally {
+    creatingProject.value = false;
+  }
+}
+
+async function deleteTask(task) {
+  deletingId.value = task.id;
+  error.value = "";
+  try {
+    await api.deleteTask(task.id);
+    invalidateProjectTasks(projectId.value);
+    if (tasks.value.length === 1 && taskPage.value > 1) {
+      taskPage.value -= 1;
+    }
+    await loadWorkspace();
+  } catch (err) {
+    error.value = err.message;
+  } finally {
+    deletingId.value = null;
+  }
+}
+
+function changeFilters() {
+  taskPage.value = 1;
+  loadTasks();
+}
+
+function goToPage(page) {
+  if (page < 1 || page > taskPageCount.value) {
+    return;
+  }
+  taskPage.value = page;
+  loadTasks();
 }
 
 async function markDone(task) {
@@ -300,6 +375,7 @@ function selectOrg(id) {
   orgId.value = id;
   statusFilter.value = "";
   assigneeFilter.value = "";
+  taskPage.value = 1;
   loadWorkspace(id);
 }
 
@@ -311,6 +387,7 @@ function selectProject(id) {
   projectId.value = id;
   statusFilter.value = "";
   assigneeFilter.value = "";
+  taskPage.value = 1;
   loadTasks(id);
 }
 
@@ -412,6 +489,12 @@ onMounted(async () => {
           <h2>Projects</h2>
           <p>{{ loadingProjects ? "Loading…" : `${projects.length} in this org` }}</p>
         </div>
+        <form v-if="canAdmin" class="project-composer" @submit.prevent="createProject">
+          <input v-model="newProjectName" placeholder="New project name" />
+          <button type="submit" :disabled="creatingProject">
+            {{ creatingProject ? "Adding…" : "Add" }}
+          </button>
+        </form>
         <div v-if="loadingProjects && !projects.length" class="skeletons">
           <div v-for="n in 3" :key="n" class="skeleton" />
         </div>
@@ -423,7 +506,7 @@ onMounted(async () => {
         >
           <div class="card-top">
             <h3>{{ project.name }}</h3>
-            <em>{{ project.open_task_count }} open</em>
+            <em class="open-count">{{ refreshingProjects ? "…" : `${project.open_task_count} open` }}</em>
           </div>
           <p class="assignees">
             {{ project.assignees.length ? project.assignees.join(" · ") : "No assignees yet" }}
@@ -439,13 +522,13 @@ onMounted(async () => {
             <h2>{{ currentProject?.name || "Select a project" }}</h2>
           </div>
           <div class="filters">
-            <select v-model="statusFilter" @change="loadTasks()">
+            <select v-model="statusFilter" @change="changeFilters">
               <option value="">All statuses</option>
               <option value="open">Open</option>
               <option value="in_progress">In progress</option>
               <option value="done">Done</option>
             </select>
-            <select v-model="assigneeFilter" @change="loadTasks()">
+            <select v-model="assigneeFilter" @change="changeFilters">
               <option value="">All people</option>
               <option
                 v-for="member in members"
@@ -527,10 +610,38 @@ onMounted(async () => {
                 >
                   {{ markingId === task.id ? "Saving…" : "Mark done" }}
                 </button>
+                <button
+                  type="button"
+                  class="ghost"
+                  :disabled="deletingId === task.id"
+                  @click="deleteTask(task)"
+                >
+                  {{ deletingId === task.id ? "Removing…" : "Delete" }}
+                </button>
               </div>
             </template>
           </li>
         </ul>
+
+        <nav v-if="!loadingTasks && taskPageCount > 1" class="pager">
+          <button
+            type="button"
+            class="ghost"
+            :disabled="taskPage <= 1"
+            @click="goToPage(taskPage - 1)"
+          >
+            Previous
+          </button>
+          <span>Page {{ taskPage }} of {{ taskPageCount }}</span>
+          <button
+            type="button"
+            class="ghost"
+            :disabled="taskPage >= taskPageCount"
+            @click="goToPage(taskPage + 1)"
+          >
+            Next
+          </button>
+        </nav>
       </main>
     </section>
   </div>
@@ -538,8 +649,11 @@ onMounted(async () => {
 
 <style scoped>
 .shell {
+  box-sizing: border-box;
   min-height: 100vh;
-  padding: 28px;
+  width: min(1280px, calc(100% - 48px));
+  margin: 0 auto;
+  padding: 28px 0 40px;
 }
 
 .top {
@@ -690,8 +804,9 @@ h1 {
 
 .board {
   display: grid;
-  grid-template-columns: 320px 1fr;
+  grid-template-columns: 320px minmax(0, 1fr);
   gap: 20px;
+  width: 100%;
   min-height: 70vh;
 }
 
@@ -704,10 +819,49 @@ main {
 }
 
 aside {
-  padding: 20px;
+  min-width: 0;
+  padding: 18px;
   display: grid;
   align-content: start;
+  gap: 10px;
+}
+
+.aside-head h2 {
+  font-size: 1.7rem;
+}
+
+.project-composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 4.2rem;
+  gap: 8px;
+}
+
+.project-composer input {
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+
+.project-composer button {
+  width: 4.2rem;
+  border: 0;
+  border-radius: 12px;
+  padding: 10px 0;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
   gap: 12px;
+  margin-top: 16px;
+  color: var(--muted);
 }
 
 .aside-head p,
@@ -746,9 +900,11 @@ aside {
 }
 
 article {
-  padding: 14px;
+  width: 100%;
+  min-width: 0;
+  padding: 13px 14px;
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: 14px;
   cursor: pointer;
   background: #fff;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
@@ -764,17 +920,27 @@ article.quiet {
 }
 
 .card-top {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   align-items: start;
 }
 
-.card-top em {
+.card-top h3 {
+  min-width: 0;
+  font-size: 1.12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.open-count {
+  margin: 0;
+  font-size: 0.88rem;
   font-style: normal;
   color: var(--forest);
   font-weight: 600;
   white-space: nowrap;
+  text-align: right;
 }
 
 .assignees,
