@@ -1,6 +1,7 @@
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models import Count, Prefetch, Q
 
 
 class Organization(models.Model):
@@ -53,6 +54,21 @@ class Membership(models.Model):
         return f"{self.user} @ {self.organization} ({self.role})"
 
 
+class ProjectQuerySet(models.QuerySet):
+    def with_task_summary(self):
+        return self.annotate(
+            open_task_count=Count(
+                "tasks",
+                filter=Q(tasks__status=Task.Status.OPEN),
+            )
+        ).prefetch_related(
+            Prefetch(
+                "tasks",
+                queryset=Task.objects.select_related("assigned_to"),
+            )
+        )
+
+
 class Project(models.Model):
     organization = models.ForeignKey(
         Organization,
@@ -69,6 +85,8 @@ class Project(models.Model):
         indexes = [
             models.Index(fields=["organization", "is_active"]),
         ]
+
+    objects = ProjectQuerySet.as_manager()
 
     def __str__(self):
         return self.name
