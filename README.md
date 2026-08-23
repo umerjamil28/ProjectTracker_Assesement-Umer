@@ -1,4 +1,4 @@
-# Organization Project & Task Tracker
+# Project Tracker
 
 ## Setup instructions
 
