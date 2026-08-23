@@ -2,7 +2,7 @@
 
 ## Setup instructions
 
-This is a Django 5 + DRF backend and a Vue 3 frontend. The Postgres database is already migrated and seeded. A `DATABASE_URL` is provided with this submission — put that in `.env`. You do not need to create tables or dummy data.
+This is a Python 3.12+ / Django 5 + DRF backend and a Vue 3 frontend. The Postgres database is already migrated and seeded. A `DATABASE_URL` is provided with this submission — put that in `.env`. You do not need to create tables or dummy data.
 
 Work from two folders:
 
@@ -92,11 +92,20 @@ Use `alice` to switch organizations and create projects. Use `carol` to confirm 
 
 **Performance on the project list.** `GET /api/v1/organizations/<id>/projects/` returns `open_task_count` and assignee usernames. That is one `annotate(Count)` plus a prefetch of tasks with `select_related("assigned_to")`. No N+1.
 
-**API versioning, pagination, soft delete.** The brief said pick 1–2 extras. All application routes are under `/api/v1/`. Task lists use page size 5. `DELETE /api/v1/tasks/<id>/` sets `deleted_at`; those rows disappear from lists and from open-task counts. There is no restore endpoint.
-
 **Tests stay off the shared database.** `manage.py test` forces in-memory SQLite so the suite never creates or mutates the provided Postgres.
 
 **Frontend.** Vue 3 covers login, org switch, projects, task filters, create/update/delete/done, and pagination. It is enough to exercise the APIs. It does not try to wrap every route.
+
+---
+
+## Optional enhancements
+
+The brief said pick 1–2 if time allowed. We shipped four:
+
+1. **API versioning** — application routes live under `/api/v1/`.
+2. **Pagination** — task lists use page size 5 (`?page=2`).
+3. **Soft deletes** — `DELETE /api/v1/tasks/<id>/` sets `deleted_at`. Those rows are hidden from lists and from open-task counts. There is no restore endpoint.
+4. **Caching** — the Vue app keeps orgs, projects, and task pages in memory. Switching back shows the last result immediately, then refreshes. In-flight requests are aborted when you change org or project. We cache that because those lists are hit on every switch, and a second network trip to Postgres is the slow part. This is not Django cache or Redis.
 
 ---
 
@@ -106,7 +115,7 @@ Use `alice` to switch organizations and create projects. Use `carol` to confirm 
 
 **Soft delete is one-way.** Keeping the row is useful for review. Building restore, a deleted-items list, and UI for it would have been a second product.
 
-**No Django cache / Redis.** The expensive endpoint is already one annotated query. A cache would hide bugs more than it would help at this size.
+**No Django cache / Redis.** The project list is already one annotated query. A shared server cache would hide bugs more than it would help at this size. Caching lives in the frontend instead (see Optional enhancements).
 
 **Page size 5.** Small on purpose so a second page shows up in the demo without a huge seed.
 
@@ -120,10 +129,10 @@ Use `alice` to switch organizations and create projects. Use `carol` to confirm 
 
 ## What you’d improve with more time
 
+- A time tracker on tasks: start/stop a timer, log hours, and see time spent per task and per person
+- Stronger user permissions: invite and remove members from the UI, let admins change roles, and let members edit only tasks assigned to them
+- More permission coverage: cross-org access, and a viewer trying to mark a task done
 - Restore for soft-deleted tasks, and an admin-only view of them
 - An audit log of who changed a task
 - A due-date reminder (management command or background job)
 - Clearer empty and error states on the frontend
-- Two more permission tests: cross-org access, and a viewer trying to mark a task done
-
-I would not add Docker or full test coverage. Those were listed as non-goals.
